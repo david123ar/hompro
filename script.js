@@ -47,13 +47,11 @@ const routes = {
 // Helpers
 // =====================
 
-// ✅ ONLY page 1 OR (totalPages - 1)
+// ✅ RANDOM between 1 and (totalPages - 1)
 // ❌ NEVER last page
 function getRandomPage(totalPages) {
   if (totalPages <= 1) return 1;
-  if (totalPages === 2) return 1;
-
-  return Math.random() < 0.5 ? 1 : totalPages - 1;
+  return Math.floor(Math.random() * (totalPages - 1)) + 1;
 }
 
 async function fetchRandomPage(url) {
