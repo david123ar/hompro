@@ -1,32 +1,36 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
-require("dotenv").config(); // Make sure you have .env file
+require("dotenv").config({ path: "/root/hompro/.env" });
 
 const app = express();
 const PORT = 6544;
 
+// =====================
 // MongoDB setup
+// =====================
 const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.MONGODB_DB || "mydatabase";
 
-mongoose.connect(MONGODB_URI, {
-  dbName: DB_NAME,
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch(err => console.error("❌ MongoDB connection error:", err.message));
+if (!MONGODB_URI) {
+  console.error("❌ MONGODB_URI is missing");
+  process.exit(1);
+}
 
-// Define a schema and model
+// =====================
+// Schema & Model
+// =====================
 const homeProSchema = new mongoose.Schema({
   series: Array,
   genre: Object,
-  createdAt: { type: Date, default: Date.now }
+  updatedAt: { type: Date, default: Date.now }
 });
 
 const HomePro = mongoose.model("hompro", homeProSchema);
 
+// =====================
+// API Routes
+// =====================
 const BASE_URL = "https://api.henpro.fun/api";
 
 const routes = {
@@ -39,29 +43,36 @@ const routes = {
   },
 };
 
-// 🌀 Helper to get random page
+// =====================
+// Helpers
+// =====================
 function getRandomPage(totalPages) {
   return Math.floor(Math.random() * totalPages) + 1;
 }
 
-// Fetch random page dynamically
 async function fetchRandomPage(url) {
   try {
     const firstRes = await axios.get(url);
     const totalPages = firstRes?.data?.totalPages || 1;
     const randomPage = getRandomPage(totalPages);
-    const pagedUrl = url.includes("?") ? `${url}&page=${randomPage}` : `${url}?page=${randomPage}`;
+
+    const pagedUrl = url.includes("?")
+      ? `${url}&page=${randomPage}`
+      : `${url}?page=${randomPage}`;
+
     console.log(`📄 Fetching random page ${randomPage} of ${url}`);
 
     const { data } = await axios.get(pagedUrl);
     return data?.data?.series?.slice(0, 14) || [];
   } catch (err) {
-    console.error(`❌ Error fetching from ${url}:`, err.message);
+    console.error(`❌ Fetch error (${url}):`, err.message);
     return [];
   }
 }
 
-// Global variable to store latest data
+// =====================
+// In-memory cache
+// =====================
 let latestData = {
   series: [],
   genre: {
@@ -72,20 +83,34 @@ let latestData = {
   },
 };
 
-// Fetch and update latest data, then save to MongoDB
+// =====================
+// Update & Save (UPSERT)
+// =====================
 async function updateData() {
+  if (mongoose.connection.readyState !== 1) {
+    console.log("⚠️ MongoDB not ready, skipping update");
+    return;
+  }
+
   console.log("⏳ Fetching new data...");
+
   latestData.series = await fetchRandomPage(routes.series);
 
   for (const [genreName, url] of Object.entries(routes.genre)) {
     latestData.genre[genreName] = await fetchRandomPage(url);
   }
 
-  // Save to MongoDB
   try {
-    const doc = new HomePro(latestData);
-    await doc.save();
-    console.log("✅ Data saved to MongoDB collection 'hompro'");
+    await HomePro.findOneAndUpdate(
+      {},
+      {
+        ...latestData,
+        updatedAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log("✅ Data saved (upsert)");
   } catch (err) {
     console.error("❌ MongoDB save error:", err.message);
   }
@@ -93,15 +118,36 @@ async function updateData() {
   console.log("✅ Data updated!");
 }
 
-// Initial fetch on server start
-updateData();
+// =====================
+// Mongo connect → start jobs
+// =====================
+mongoose
+  .connect(MONGODB_URI, { dbName: DB_NAME })
+  .then(() => {
+    console.log("✅ MongoDB connected");
 
-// Fetch every hour
-setInterval(updateData, 60 * 60 * 1000);
+    updateData();
+    setInterval(updateData, 60 * 60 * 1000); // every hour
+  })
+  .catch(err => {
+    console.error("❌ MongoDB connection error:", err.message);
+  });
 
-// Express endpoint serves latest in-memory data
-app.get("/", (req, res) => {
-  res.json(latestData);
+// =====================
+// API Endpoint
+// =====================
+app.get("/", async (req, res) => {
+  try {
+    const doc = await HomePro.findOne().sort({ updatedAt: -1 }).lean();
+    res.json(doc || latestData);
+  } catch (err) {
+    res.json(latestData);
+  }
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
+// =====================
+// Server
+// =====================
+app.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+});
