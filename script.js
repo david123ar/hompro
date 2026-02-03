@@ -46,21 +46,28 @@ const routes = {
 // =====================
 // Helpers
 // =====================
+
+// ✅ ONLY page 1 OR (totalPages - 1)
+// ❌ NEVER last page
 function getRandomPage(totalPages) {
-  return Math.floor(Math.random() * totalPages) + 1;
+  if (totalPages <= 1) return 1;
+  if (totalPages === 2) return 1;
+
+  return Math.random() < 0.5 ? 1 : totalPages - 1;
 }
 
 async function fetchRandomPage(url) {
   try {
     const firstRes = await axios.get(url);
     const totalPages = firstRes?.data?.totalPages || 1;
-    const randomPage = getRandomPage(totalPages);
+
+    const page = getRandomPage(totalPages);
 
     const pagedUrl = url.includes("?")
-      ? `${url}&page=${randomPage}`
-      : `${url}?page=${randomPage}`;
+      ? `${url}&page=${page}`
+      : `${url}?page=${page}`;
 
-    console.log(`📄 Fetching random page ${randomPage} of ${url}`);
+    console.log(`📄 Fetching page ${page} of ${url}`);
 
     const { data } = await axios.get(pagedUrl);
     return data?.data?.series?.slice(0, 14) || [];
@@ -140,7 +147,7 @@ app.get("/", async (req, res) => {
   try {
     const doc = await HomePro.findOne().sort({ updatedAt: -1 }).lean();
     res.json(doc || latestData);
-  } catch (err) {
+  } catch {
     res.json(latestData);
   }
 });
